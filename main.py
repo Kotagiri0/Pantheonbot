@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from questions import questions
+import requests
+import time
 
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
@@ -96,9 +98,34 @@ def run_dummy_server():
     print(f"Fake HTTP server запущен на порту {port}")
     server.serve_forever()
 
+# --- Безопасный запуск polling ---
+def start_polling():
+    """Отключает webhook и запускает polling с авто-повтором."""
+    try:
+        print("Удаляем старый webhook (если есть)...")
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
+        print("Webhook удалён, запускаем polling...")
+    except Exception as e:
+        print(f"Ошибка при удалении webhook: {e}")
+
+    while True:
+        try:
+            bot.polling(non_stop=True)
+        except telebot.apihelper.ApiTelegramException as e:
+            if "Conflict" in str(e):
+                print("⚠️ Conflict detected: удаляем webhook и перезапускаем polling...")
+                requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook")
+                time.sleep(5)
+            else:
+                print(f"❌ Ошибка polling: {e}")
+                time.sleep(10)
+        except Exception as e:
+            print(f"❌ Неизвестная ошибка polling: {e}")
+            time.sleep(10)
+
 # --- Точка входа ---
 if __name__ == '__main__':
     init_leaderboard_table()
     load_leaderboard()
     threading.Thread(target=run_dummy_server, daemon=True).start()
-    bot.polling(non_stop=True)
+    start_polling()
