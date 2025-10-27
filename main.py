@@ -1,33 +1,29 @@
-# bot.py
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import random
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from dotenv import load_dotenv
-import json  # Можно оставить для fallback, но не обязательно
-import psycopg2  # Новая библиотека для Postgres
-from psycopg2.extras import RealDictCursor  # Для удобного чтения как dict
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from questions import questions
 
-# Загружаем переменные из .env файла
 load_dotenv()
 TOKEN = os.getenv('BOT_TOKEN')
-DATABASE_URL = os.getenv('DATABASE_URL')  # Connection string от Render
+DATABASE_URL = os.getenv('DATABASE_URL')
+
 if not TOKEN:
     raise ValueError('BOT_TOKEN не найден в .env файле!')
 if not DATABASE_URL:
     raise ValueError('DATABASE_URL не найден в .env файле!')
 
 bot = telebot.TeleBot(TOKEN)
-
-# Глобальная переменная для кэша leaderboard (обновляется при изменениях)
 leaderboard_cache = {}
 
-# Функция подключения к БД
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, sslmode='require')
 
-# Инициализация таблицы leaderboard (вызывается при запуске)
 def init_leaderboard_table():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -43,7 +39,6 @@ def init_leaderboard_table():
     conn.close()
     print("Таблица leaderboard инициализирована.")
 
-# Загрузка leaderboard из БД (с кэшированием)
 def load_leaderboard():
     global leaderboard_cache
     if leaderboard_cache:
@@ -57,12 +52,10 @@ def load_leaderboard():
     conn.close()
     return leaderboard_cache
 
-# Сохранение/обновление записи в leaderboard
 def save_leaderboard_entry(user_id, username, score):
     global leaderboard_cache
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Вставляем или обновляем (UPSERT)
     cursor.execute("""
         INSERT INTO leaderboard (user_id, username, score)
         VALUES (%s, %s, %s)
@@ -73,21 +66,15 @@ def save_leaderboard_entry(user_id, username, score):
     conn.commit()
     cursor.close()
     conn.close()
-    # Обновляем кэш
-    leaderboard_cache[user_id] = {'user_id': user_id, 'username': username, 'score': max(leaderboard_cache.get(user_id, {}).get('score', 0), score)}
+    leaderboard_cache[user_id] = {
+        'user_id': user_id,
+        'username': username,
+        'score': max(leaderboard_cache.get(user_id, {}).get('score', 0), score)
+    }
     print(f"Обновлён лидерборд для {username}: {score}")
 
-# Остальной код без изменений...
-# (user_states, @bot.message_handler(commands=['start']), @bot.callback_query_handler, send_question, format_leaderboard)
-
-# В send_question, в конце квиза, замените save_leaderboard на:
-# username = bot.get_chat(user_id).username or f"User_{user_id}"
-# score = state['score']
-# save_leaderboard_entry(str(user_id), username, score)  # Вместо старого leaderboard[str(user_id)] = ...
-
-# В format_leaderboard используйте load_leaderboard():
 def format_leaderboard():
-    lb = load_leaderboard()  # Загружаем из БД
+    lb = load_leaderboard()
     if not lb:
         return 'Турнирная таблица пуста. Пройди квиз, чтобы попасть в рейтинг!'
     sorted_lb = sorted(lb.items(), key=lambda x: x[1]['score'], reverse=True)[:10]
@@ -96,8 +83,22 @@ def format_leaderboard():
         result += f"{i}. {data['username']} — {data['score']} баллов\n"
     return result
 
-# Инициализация при запуске
+# --- Фейковый HTTP сервер, чтобы Render видел порт ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    print(f"Fake HTTP server запущен на порту {port}")
+    server.serve_forever()
+
+# --- Точка входа ---
 if __name__ == '__main__':
-    init_leaderboard_table()  # Создаём таблицу
-    load_leaderboard()  # Загружаем в кэш
-    bot.polling()
+    init_leaderboard_table()
+    load_leaderboard()
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    bot.polling(non_stop=True)
