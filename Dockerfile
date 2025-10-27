@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Копируем файлы проекта
 COPY requirements.txt .
-COPY bot.py .
+COPY main.py .
 COPY questions.py .
 
 # Устанавливаем зависимости
