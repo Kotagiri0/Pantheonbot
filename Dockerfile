@@ -14,4 +14,4 @@ COPY questions.py .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Указываем команду для запуска бота
-CMD ["python", "bot.py"]
+CMD ["python", "main.py"]
